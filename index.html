@@ -208,12 +208,25 @@
                         <span id="backlog-count" class="text-xs bg-black px-3 py-1 text-[#FFD600]">0</span>
                     </h2>
                     
-                    <form id="add-task-form" class="mb-6 flex flex-col gap-2">
+                    <form id="add-task-form" class="mb-4 flex flex-col gap-2">
                         <input type="text" id="new-task-title" placeholder="Feature name..." class="flex-1 px-4 py-3 border-2 border-black focus:ring-0 focus:bg-yellow-50 outline-none transition-all text-sm font-bold uppercase" required>
                         <button type="submit" class="bg-black text-[#FFD600] py-3 font-black uppercase text-xs tracking-widest hover:bg-slate-800 transition-colors">
                             Add to backlog
                         </button>
                     </form>
+
+                    <!-- Import/Export Tools -->
+                    <div class="grid grid-cols-2 gap-2 mb-6">
+                        <button id="import-csv-trigger" class="flex items-center justify-center gap-2 bg-slate-50 border-2 border-black py-2 text-[10px] font-black uppercase hover:bg-yellow-50 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                            Import
+                        </button>
+                        <button id="export-csv-btn" class="flex items-center justify-center gap-2 bg-slate-50 border-2 border-black py-2 text-[10px] font-black uppercase hover:bg-yellow-50 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                            Download
+                        </button>
+                        <input type="file" id="csv-file-input" accept=".csv" class="hidden">
+                    </div>
 
                     <div id="task-list" class="space-y-3 flex-1 overflow-y-auto pr-1">
                         <!-- Tasks injected here -->
@@ -359,6 +372,9 @@
         const skipModal = document.getElementById('skip-modal');
         const modalCancelBtn = document.getElementById('modal-cancel-btn');
         const modalConfirmBtn = document.getElementById('modal-confirm-btn');
+        const csvFileInput = document.getElementById('csv-file-input');
+        const importTrigger = document.getElementById('import-csv-trigger');
+        const exportBtn = document.getElementById('export-csv-btn');
 
         function init() {
             renderDeck();
@@ -391,6 +407,85 @@
                 skipModal.classList.add('hidden');
                 handleSkip();
             };
+
+            // CSV Import/Export
+            importTrigger.onclick = () => csvFileInput.click();
+            csvFileInput.onchange = handleCSVImport;
+            exportBtn.onclick = exportBacklogToCSV;
+        }
+
+        function handleCSVImport(e) {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const text = event.target.result;
+                const lines = text.split(/\r?\n/);
+                let addedCount = 0;
+
+                // Simple parser: skip header if first line contains "title"
+                const hasHeader = lines[0].toLowerCase().includes('title');
+                const startLine = hasHeader ? 1 : 0;
+
+                for (let i = startLine; i < lines.length; i++) {
+                    const row = lines[i].trim();
+                    if (!row) continue;
+
+                    // Handle comma separation, strip quotes
+                    const title = row.split(',')[0].replace(/^["']|["']$/g, '').trim();
+                    if (title) {
+                        backlog.push({ 
+                            id: Date.now() + i, 
+                            title: title, 
+                            estimate: null, 
+                            status: 'pending' 
+                        });
+                        addedCount++;
+                    }
+                }
+
+                if (addedCount > 0) {
+                    if (!activeTaskId) setActiveTask(backlog[backlog.length - addedCount].id);
+                    updateUI();
+                    showNotification(`Imported ${addedCount} tasks from CSV`);
+                } else {
+                    showNotification("No valid tasks found in CSV");
+                }
+                csvFileInput.value = ''; // Reset input
+            };
+            reader.readAsText(file);
+        }
+
+        function exportBacklogToCSV() {
+            if (backlog.length === 0) {
+                showNotification("Backlog is empty");
+                return;
+            }
+
+            let csvRows = ["Title,Estimate,Status"];
+            backlog.forEach(task => {
+                // Escape quotes for CSV
+                const cleanTitle = task.title.replace(/"/g, '""');
+                const estimate = task.estimate !== null ? task.estimate : "";
+                csvRows.push(`"${cleanTitle}",${estimate},${task.status}`);
+            });
+
+            const csvString = csvRows.join("\n");
+            const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement("a");
+            
+            const timestamp = new Date().toISOString().split('T')[0];
+            link.setAttribute("href", url);
+            link.setAttribute("download", `mindera_planning_results_${timestamp}.csv`);
+            link.style.visibility = 'hidden';
+            
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            
+            showNotification("CSV Export started");
         }
 
         function triggerConfetti() {
