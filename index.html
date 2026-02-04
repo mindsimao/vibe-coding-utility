@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mindera Planning Poker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800;900&display=swap');
+
+        :root {
+            --mindera-yellow: #FFD600;
+            --mindera-dark: #1A1A1A;
+            --mindera-dark-light: #2D2D2D;
+            --bg: #FFFFFF;
+        }
+
+        body {
+            background-color: var(--bg);
+            font-family: 'Inter', sans-serif;
+            color: var(--mindera-dark);
+            overflow-x: hidden;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #ccc; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: var(--mindera-dark); }
+
+        /* Animations */
+        @keyframes votePop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); background-color: var(--mindera-yellow); }
+            100% { transform: scale(1); }
+        }
+
+        @keyframes successPop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); rotate: 2deg; }
+            100% { transform: scale(1); rotate: 0deg; }
+        }
+
+        @keyframes particleUp {
+            0% { transform: translateY(0) rotate(0); opacity: 1; }
+            100% { transform: translateY(-100vh) rotate(360deg); opacity: 0; }
+        }
+
+        .anim-vote-success {
+            animation: votePop 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .anim-all-finished {
+            animation: successPop 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+        }
+
+        .particle {
+            position: fixed;
+            pointer-events: none;
+            z-index: 99;
+            width: 15px;
+            height: 15px;
+            background: var(--mindera-yellow);
+            border: 2px solid var(--mindera-dark);
+        }
+
+        /* Poker Card Styles */
+        .poker-card {
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            cursor: pointer;
+            perspective: 1000px;
+            border-width: 2px;
+        }
+
+        .poker-card:hover:not(.disabled) {
+            transform: translateY(-6px);
+            border-color: var(--mindera-dark);
+            box-shadow: 0 10px 0 0 var(--mindera-yellow);
+        }
+
+        .poker-card.selected {
+            background-color: var(--mindera-dark);
+            color: var(--mindera-yellow);
+            transform: translateY(-10px);
+            border-color: var(--mindera-dark);
+            box-shadow: 0 12px 0 0 var(--mindera-yellow);
+        }
+
+        .poker-card.disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+            filter: grayscale(1);
+        }
+
+        /* Card Flip Animation */
+        .result-card-inner {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            text-align: center;
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+            transform-style: preserve-3d;
+        }
+
+        .flipped .result-card-inner {
+            transform: rotateY(180deg);
+        }
+
+        .card-front, .card-back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            -webkit-backface-visibility: hidden;
+            backface-visibility: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 0.5rem;
+            border: 2px solid var(--mindera-dark);
+        }
+
+        .card-back {
+            background-color: var(--mindera-yellow);
+            transform: rotateY(180deg);
+            color: var(--mindera-dark);
+            font-size: 1rem;
+            font-weight: 900;
+        }
+
+        .card-back.skipped-card {
+            background-color: #e5e7eb;
+            color: #9ca3af;
+            border-color: #d1d5db;
+            font-size: 0.7rem;
+        }
+
+        .card-front {
+            background-color: var(--mindera-dark);
+            background-image: radial-gradient(var(--mindera-dark-light) 1.5px, transparent 0);
+            background-size: 10px 10px;
+        }
+
+        #notification {
+            position: fixed;
+            bottom: 2rem;
+            right: 2rem;
+            padding: 1rem 1.5rem;
+            border-radius: 0.25rem;
+            background: var(--mindera-dark);
+            color: var(--mindera-yellow);
+            font-weight: 700;
+            display: none;
+            z-index: 100;
+            box-shadow: 8px 8px 0 0 var(--mindera-yellow);
+            animation: slideUp 0.3s ease-out;
+        }
+
+        @keyframes slideUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .active-player-ring {
+            box-shadow: 0 0 0 4px var(--mindera-yellow);
+        }
+
+        .modal-backdrop {
+            background-color: rgba(0, 0, 0, 0.85);
+            backdrop-filter: blur(2px);
+        }
+
+        .task-active {
+            background-color: var(--mindera-yellow) !important;
+            border-color: var(--mindera-dark) !important;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <div class="max-w-screen-2xl mx-auto">
+        <!-- Header -->
+        <header class="flex flex-col md:flex-row justify-between items-center mb-10 gap-6">
+            <div class="flex items-center gap-4">
+                <div class="w-14 h-14 bg-[#1A1A1A] rounded-none flex items-center justify-center text-[#FFD600] font-black text-3xl transform -rotate-3 border-4 border-black shadow-[6px_6px_0_0_#FFD600]">M</div>
+                <div>
+                    <h1 class="text-3xl font-black text-slate-900 tracking-tighter uppercase italic">Planning Poker</h1>
+                    <p class="text-slate-500 text-xs font-bold uppercase tracking-[0.2em]">Mindera Engineering</p>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-4 bg-white p-2 rounded-none border-2 border-black shadow-[4px_4px_0_0_#000]">
+                <button id="reset-btn" class="px-4 py-2 text-sm font-bold text-slate-600 hover:text-black transition-colors uppercase">
+                    Reset Round
+                </button>
+                <button id="reveal-btn" class="px-8 py-2 text-sm font-black text-black bg-[#FFD600] border-2 border-black hover:bg-black hover:text-[#FFD600] transition-all disabled:opacity-50 disabled:cursor-not-allowed uppercase">
+                    Reveal All
+                </button>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 xl:grid-cols-12 gap-8">
+            
+            <!-- LEFT: BACKLOG -->
+            <aside class="xl:col-span-3 space-y-4">
+                <div class="bg-white p-6 rounded-none border-4 border-black shadow-[10px_10px_0_0_#1A1A1A] flex flex-col h-[calc(100vh-200px)] min-h-[550px]">
+                    <h2 class="text-xl font-black text-slate-900 mb-6 flex items-center justify-between uppercase tracking-tight">
+                        Backlog
+                        <span id="backlog-count" class="text-xs bg-black px-3 py-1 text-[#FFD600]">0</span>
+                    </h2>
+                    
+                    <form id="add-task-form" class="mb-6 flex flex-col gap-2">
+                        <input type="text" id="new-task-title" placeholder="Feature name..." class="flex-1 px-4 py-3 border-2 border-black focus:ring-0 focus:bg-yellow-50 outline-none transition-all text-sm font-bold uppercase" required>
+                        <button type="submit" class="bg-black text-[#FFD600] py-3 font-black uppercase text-xs tracking-widest hover:bg-slate-800 transition-colors">
+                            Add to backlog
+                        </button>
+                    </form>
+
+                    <div id="task-list" class="space-y-3 flex-1 overflow-y-auto pr-1">
+                        <!-- Tasks injected here -->
+                    </div>
+                </div>
+            </aside>
+
+            <!-- CENTER: VOTING ARENA -->
+            <main class="xl:col-span-6 space-y-6">
+                <!-- Current Feature Banner -->
+                <div id="active-task-banner" class="bg-black text-white p-6 rounded-none border-4 border-black shadow-[10px_10px_0_0_#FFD600] transition-all duration-300">
+                    <div class="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                        <div class="flex items-center gap-5">
+                            <div class="w-14 h-14 bg-[#FFD600] text-black rounded-none flex items-center justify-center border-2 border-black rotate-3">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                            </div>
+                            <div>
+                                <span class="text-[#FFD600] text-[10px] font-black uppercase tracking-[0.3em] mb-1 block">Active Estimation</span>
+                                <h2 id="current-task-title" class="text-2xl font-black uppercase italic tracking-tighter">Select a feature</h2>
+                            </div>
+                        </div>
+                        <div id="turn-info" class="flex items-center gap-4 bg-white/10 p-3 border border-white/20">
+                            <div class="text-right">
+                                <span class="block text-[10px] font-black text-[#FFD600] uppercase tracking-widest" id="turn-label">Next up</span>
+                                <span class="block font-black text-lg truncate max-w-[120px]" id="turn-player">-</span>
+                            </div>
+                            <button id="skip-player-btn" class="bg-[#FFD600] text-black p-2 hover:bg-white transition-colors hidden">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Deck -->
+                <div class="bg-slate-50 p-8 rounded-none border-2 border-black">
+                    <div id="deck" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-4">
+                        <!-- Cards injected here -->
+                    </div>
+                </div>
+
+                <!-- Session Stats -->
+                <div id="stats-area" class="hidden">
+                    <div class="bg-white border-4 border-black p-8 rounded-none shadow-[10px_10px_0_0_#1A1A1A] space-y-6">
+                        <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+                            <div class="p-4 bg-slate-50 border-2 border-black text-center">
+                                <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Average</span>
+                                <span id="stat-avg" class="text-3xl font-black text-black italic">-</span>
+                            </div>
+                            <div class="p-4 bg-slate-50 border-2 border-black text-center">
+                                <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Median</span>
+                                <span id="stat-median" class="text-3xl font-black text-black italic">-</span>
+                            </div>
+                            <div class="p-4 bg-slate-50 border-2 border-black text-center">
+                                <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest block mb-2">Consensus</span>
+                                <span id="stat-consensus" class="text-3xl font-black text-black italic">-</span>
+                            </div>
+                            <div class="p-4 bg-[#FFD600] border-2 border-black text-center">
+                                <span class="text-[10px] font-black text-black uppercase tracking-widest block mb-2">Skipped</span>
+                                <span id="stat-skipped" class="text-3xl font-black text-black italic">0</span>
+                            </div>
+                        </div>
+                        
+                        <div class="pt-6 border-t-2 border-black flex items-center justify-between gap-4">
+                            <p class="text-xs text-slate-600 font-bold uppercase italic">Agreement reached? Save result.</p>
+                            <button id="finalize-task-btn" class="bg-black text-[#FFD600] px-8 py-3 font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-[6px_6px_0_0_#FFD600]">
+                                Save Estimate
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </main>
+
+            <!-- RIGHT: PARTICIPANTS -->
+            <aside class="xl:col-span-3 space-y-4">
+                <div class="bg-white p-6 rounded-none border-4 border-black shadow-[10px_10px_0_0_#FFD600] h-full flex flex-col">
+                    <h2 class="text-xl font-black text-slate-900 mb-6 flex justify-between items-center uppercase tracking-tight">
+                        The Crew
+                        <span id="participant-count" class="bg-black text-[#FFD600] text-xs px-3 py-1">0</span>
+                    </h2>
+                    
+                    <div id="player-list" class="space-y-4 flex-grow overflow-y-auto max-h-[450px] mb-8">
+                        <!-- Players injected here -->
+                    </div>
+
+                    <div class="pt-6 border-t-2 border-black">
+                        <form id="add-player-form" class="space-y-3">
+                            <input type="text" id="new-player-name" placeholder="Name..." class="w-full px-4 py-3 border-2 border-black focus:ring-0 outline-none text-sm font-bold uppercase" required>
+                            <button type="submit" class="w-full bg-black text-[#FFD600] font-black py-3 uppercase text-xs tracking-widest hover:bg-slate-800 transition-colors">
+                                Join Round
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </aside>
+        </div>
+    </div>
+
+    <!-- Skip Confirmation Modal -->
+    <div id="skip-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden p-4">
+        <div class="modal-backdrop absolute inset-0"></div>
+        <div class="bg-white relative rounded-none border-4 border-black shadow-[15px_15px_0_0_#000] max-w-sm w-full p-8 transform transition-all">
+            <div class="w-16 h-16 bg-[#FFD600] text-black border-2 border-black flex items-center justify-center mb-6">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 17 5-5-5-5"/><path d="m13 17 5-5-5-5"/></svg>
+            </div>
+            <h3 class="text-2xl font-black text-black mb-3 uppercase italic tracking-tighter">Skip player?</h3>
+            <p class="text-slate-600 font-bold mb-8 uppercase text-xs leading-relaxed">This participant will be marked as "Skipped" for this specific feature estimation.</p>
+            <div class="flex flex-col gap-3">
+                <button id="modal-confirm-btn" class="w-full bg-black text-[#FFD600] py-4 font-black uppercase text-xs tracking-widest hover:bg-slate-800 transition-all">
+                    Yes, Skip them
+                </button>
+                <button id="modal-cancel-btn" class="w-full bg-white text-black border-2 border-black py-3 font-black uppercase text-xs tracking-widest hover:bg-slate-100 transition-colors">
+                    Wait, go back
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="notification">Action recorded!</div>
+
+    <script>
+        const fibonacci = [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, '?'];
+        
+        let participants = []; 
+        let backlog = []; 
+        let activeTaskId = null;
+        let activePlayerIndex = -1;
+        let isRevealed = false;
+        let justVotedId = null; // Track who just voted for animation
+
+        const deckContainer = document.getElementById('deck');
+        const playerListContainer = document.getElementById('player-list');
+        const taskListContainer = document.getElementById('task-list');
+        const addPlayerForm = document.getElementById('add-player-form');
+        const addTaskForm = document.getElementById('add-task-form');
+        const activeTaskTitleEl = document.getElementById('current-task-title');
+        const turnPlayerEl = document.getElementById('turn-player');
+        const turnLabelEl = document.getElementById('turn-label');
+        const revealBtn = document.getElementById('reveal-btn');
+        const resetBtn = document.getElementById('reset-btn');
+        const finalizeBtn = document.getElementById('finalize-task-btn');
+        const skipBtn = document.getElementById('skip-player-btn');
+        const statsArea = document.getElementById('stats-area');
+        const skipModal = document.getElementById('skip-modal');
+        const modalCancelBtn = document.getElementById('modal-cancel-btn');
+        const modalConfirmBtn = document.getElementById('modal-confirm-btn');
+
+        function init() {
+            renderDeck();
+            setupEventListeners();
+            updateUI();
+        }
+
+        function setupEventListeners() {
+            addPlayerForm.onsubmit = (e) => {
+                e.preventDefault();
+                const input = document.getElementById('new-player-name');
+                addParticipant(input.value);
+                input.value = '';
+            };
+
+            addTaskForm.onsubmit = (e) => {
+                e.preventDefault();
+                const input = document.getElementById('new-task-title');
+                addTask(input.value);
+                input.value = '';
+            };
+
+            revealBtn.onclick = toggleReveal;
+            resetBtn.onclick = resetRound;
+            finalizeBtn.onclick = finalizeTask;
+            
+            skipBtn.onclick = () => skipModal.classList.remove('hidden');
+            modalCancelBtn.onclick = () => skipModal.classList.add('hidden');
+            modalConfirmBtn.onclick = () => {
+                skipModal.classList.add('hidden');
+                handleSkip();
+            };
+        }
+
+        function triggerConfetti() {
+            const colors = ['#FFD600', '#1A1A1A', '#FFFFFF'];
+            for (let i = 0; i < 30; i++) {
+                const p = document.createElement('div');
+                p.className = 'particle';
+                p.style.left = Math.random() * 100 + 'vw';
+                p.style.bottom = '-20px';
+                p.style.backgroundColor = colors[Math.floor(Math.random() * colors.length)];
+                p.style.width = (Math.random() * 15 + 5) + 'px';
+                p.style.height = p.style.width;
+                p.style.animation = `particleUp ${Math.random() * 2 + 1}s ease-in forwards`;
+                document.body.appendChild(p);
+                setTimeout(() => p.remove(), 3000);
+            }
+        }
+
+        function renderDeck() {
+            deckContainer.innerHTML = '';
+            fibonacci.forEach(val => {
+                const card = document.createElement('div');
+                card.className = 'poker-card bg-white border-2 border-black h-24 flex items-center justify-center text-2xl font-black text-black select-none';
+                card.innerText = val;
+                card.onclick = () => handleVote(val);
+                deckContainer.appendChild(card);
+            });
+        }
+
+        function addParticipant(name) {
+            participants.push({ id: Date.now(), name, vote: null, hasVoted: false, skipped: false });
+            if (activePlayerIndex === -1 && participants.length === 1) activePlayerIndex = 0;
+            updateUI();
+            showNotification(`Welcome aboard, ${name}`);
+        }
+
+        function addTask(title) {
+            const task = { id: Date.now(), title, estimate: null, status: 'pending' };
+            backlog.push(task);
+            if (!activeTaskId) setActiveTask(task.id);
+            updateUI();
+            showNotification(`New task in backlog`);
+        }
+
+        function setActiveTask(id) {
+            activeTaskId = id;
+            resetRound();
+            updateUI();
+        }
+
+        function handleVote(val) {
+            if (isRevealed || activePlayerIndex === -1 || !activeTaskId) return;
+            
+            const currentPlayer = participants[activePlayerIndex];
+            currentPlayer.vote = val;
+            currentPlayer.hasVoted = true;
+            currentPlayer.skipped = false;
+            
+            justVotedId = currentPlayer.id; // Mark for animation
+            showNotification(`${currentPlayer.name} has voted`);
+            
+            moveToNextPlayer();
+        }
+
+        function handleSkip() {
+            if (isRevealed || activePlayerIndex === -1) return;
+            const currentPlayer = participants[activePlayerIndex];
+            currentPlayer.vote = null;
+            currentPlayer.hasVoted = true;
+            currentPlayer.skipped = true;
+            justVotedId = currentPlayer.id;
+            moveToNextPlayer();
+        }
+
+        function moveToNextPlayer() {
+            const allFinished = participants.every(p => p.hasVoted);
+            if (allFinished) {
+                activePlayerIndex = -1;
+                triggerConfetti(); // Play confetti when everyone is done
+                const banner = document.getElementById('active-task-banner');
+                banner.classList.add('anim-all-finished');
+                setTimeout(() => banner.classList.remove('anim-all-finished'), 600);
+            } else {
+                let next = (activePlayerIndex + 1) % participants.length;
+                let loops = 0;
+                while (participants[next].hasVoted && loops < participants.length) {
+                    next = (next + 1) % participants.length;
+                    loops++;
+                }
+                activePlayerIndex = loops < participants.length ? next : -1;
+            }
+            updateUI();
+        }
+
+        function finalizeTask() {
+            const votes = participants.map(p => p.vote).filter(v => typeof v === 'number');
+            if (votes.length === 0) return;
+
+            const avg = votes.reduce((a, b) => a + b, 0) / votes.length;
+            const finalEstimate = Math.round(avg * 10) / 10;
+            
+            const task = backlog.find(t => t.id === activeTaskId);
+            if (task) {
+                task.estimate = finalEstimate;
+                task.status = 'voted';
+            }
+            
+            showNotification("Final estimate recorded");
+            const nextPending = backlog.find(t => t.status === 'pending');
+            if (nextPending) setActiveTask(nextPending.id);
+            else { resetRound(); updateUI(); }
+        }
+
+        function toggleReveal() {
+            isRevealed = !isRevealed;
+            updateUI();
+        }
+
+        function resetRound() {
+            participants.forEach(p => { p.vote = null; p.hasVoted = false; p.skipped = false; });
+            isRevealed = false;
+            activePlayerIndex = participants.length > 0 ? 0 : -1;
+            updateUI();
+        }
+
+        function updateUI() {
+            taskListContainer.innerHTML = '';
+            backlog.forEach(t => {
+                const isActive = t.id === activeTaskId;
+                const div = document.createElement('div');
+                div.className = `p-4 border-2 border-black transition-all cursor-pointer group flex items-center justify-between ${isActive ? 'task-active shadow-[4px_4px_0_0_#000]' : 'bg-white hover:bg-yellow-50 shadow-[2px_2px_0_0_#000]'}`;
+                div.onclick = () => setActiveTask(t.id);
+                
+                div.innerHTML = `
+                    <div class="overflow-hidden">
+                        <span class="block text-[9px] font-black ${isActive ? 'text-black' : 'text-slate-400'} uppercase tracking-widest">${t.status === 'voted' ? 'estimated' : 'pending'}</span>
+                        <h3 class="font-black text-sm text-black truncate uppercase italic tracking-tighter">${t.title}</h3>
+                    </div>
+                    <div class="flex items-center gap-3">
+                        ${t.estimate !== null ? `<span class="bg-black text-[#FFD600] text-[10px] font-black px-2 py-1">${t.estimate}</span>` : ''}
+                        <div class="text-black/20 group-hover:text-black">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                        </div>
+                    </div>
+                `;
+                taskListContainer.appendChild(div);
+            });
+            document.getElementById('backlog-count').innerText = backlog.length;
+
+            const currentTask = backlog.find(t => t.id === activeTaskId);
+            if (currentTask) {
+                activeTaskTitleEl.innerText = currentTask.title;
+                deckContainer.classList.remove('opacity-30', 'pointer-events-none');
+            } else {
+                activeTaskTitleEl.innerText = "Select a feature";
+                deckContainer.classList.add('opacity-30', 'pointer-events-none');
+            }
+
+            if (activePlayerIndex !== -1 && !isRevealed && activeTaskId) {
+                const p = participants[activePlayerIndex];
+                turnPlayerEl.innerText = p.name;
+                turnLabelEl.innerText = "Current Voter";
+                skipBtn.classList.remove('hidden');
+            } else {
+                turnPlayerEl.innerText = isRevealed ? "Discussion" : "-";
+                turnLabelEl.innerText = "Round State";
+                skipBtn.classList.add('hidden');
+            }
+
+            playerListContainer.innerHTML = '';
+            participants.forEach((p, idx) => {
+                const isCurrent = idx === activePlayerIndex;
+                const div = document.createElement('div');
+                const isRecentVoter = justVotedId === p.id;
+                
+                div.className = `flex items-center justify-between p-4 border-2 transition-all ${isCurrent ? 'bg-black text-white border-black active-player-ring shadow-[6px_6px_0_0_#FFD600]' : 'bg-slate-50 border-black'} ${isRecentVoter ? 'anim-vote-success' : ''}`;
+                
+                let cardBackContent = p.vote ?? '-';
+                let cardBackClass = 'card-back';
+                let statusIcon = p.name.substring(0,2).toUpperCase();
+                let statusBg = isCurrent ? 'bg-[#FFD600] text-black' : 'bg-black text-[#FFD600]';
+
+                if (p.skipped) {
+                    cardBackContent = '↷'; cardBackClass += ' skipped-card';
+                    statusIcon = '↷';
+                } else if (p.hasVoted) {
+                    statusIcon = '✓';
+                }
+
+                div.innerHTML = `
+                    <div class="flex items-center gap-4">
+                        <div class="w-10 h-10 ${statusBg} flex items-center justify-center font-black text-xs border-2 border-black transition-transform duration-300 ${p.hasVoted ? 'scale-110' : ''}">
+                            ${statusIcon}
+                        </div>
+                        <span class="text-sm font-black uppercase tracking-tight">${p.name}</span>
+                    </div>
+                    <div class="w-10 h-14 ${isRevealed ? 'flipped' : ''} relative">
+                         <div class="result-card-inner">
+                            <div class="card-front"></div>
+                            <div class="card-back ${cardBackClass}">${cardBackContent}</div>
+                         </div>
+                    </div>
+                `;
+                playerListContainer.appendChild(div);
+            });
+            document.getElementById('participant-count').innerText = participants.length;
+            
+            // Clear the "just voted" flag after UI renders
+            setTimeout(() => { justVotedId = null; }, 500);
+
+            revealBtn.disabled = participants.length === 0 || (!participants.some(p => p.hasVoted) && !isRevealed) || !activeTaskId;
+            if (isRevealed) {
+                calculateStats();
+                statsArea.classList.remove('hidden');
+                revealBtn.innerText = "Hide results";
+            } else {
+                statsArea.classList.add('hidden');
+                revealBtn.innerText = "Reveal All";
+            }
+        }
+
+        function calculateStats() {
+            const votes = participants.map(p => p.vote).filter(v => typeof v === 'number');
+            const skippedCount = participants.filter(p => p.skipped).length;
+            document.getElementById('stat-skipped').innerText = skippedCount;
+            if (votes.length === 0) {
+                ['stat-avg', 'stat-median', 'stat-consensus'].forEach(id => document.getElementById(id).innerText = '-');
+                return;
+            }
+            const avg = votes.reduce((a, b) => a + b, 0) / votes.length;
+            const sorted = [...votes].sort((a, b) => a - b);
+            const mid = Math.floor(sorted.length / 2);
+            const median = sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+            const counts = {};
+            votes.forEach(v => counts[v] = (counts[v] || 0) + 1);
+            const maxCount = Math.max(...Object.values(counts));
+            const consensusPct = Math.round((maxCount / votes.length) * 100);
+            document.getElementById('stat-avg').innerText = avg.toFixed(1);
+            document.getElementById('stat-median').innerText = median;
+            document.getElementById('stat-consensus').innerText = `${consensusPct}%`;
+        }
+
+        function showNotification(msg) {
+            const n = document.getElementById('notification');
+            n.innerText = msg; n.style.display = 'block';
+            setTimeout(() => n.style.display = 'none', 2000);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
